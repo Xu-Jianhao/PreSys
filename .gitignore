@@ -1,0 +1,6 @@
+*.log
+*.pid
+/log
+/sbin
+/obj
+/lib
