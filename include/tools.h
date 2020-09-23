@@ -80,21 +80,25 @@ int pre_list_destory(pre_list *);
 
 void pre_node_free(pre_list *);
 
-/* SHM */
-int pre_addinfo_Toshm(void *, r_info *);
+/* SHM QUEUE */
+int addinfo_ToRshm(void *, r_info *);
+int addinfo_ToQshm(void *, r_info *);
 
-int pre_getinfo_Fromshm(void *, r_info *);
+int getinfo_FromRshm(void *, r_info *);
+int getinfo_FromQshm(void *, r_info *);
 
-int pre_shm_IsEmpty(void *);
+int Rshm_IsEmpty(void *);
+int Qshm_IsEmpty(void *);
 
-int pre_shm_IsFull(void *);
+int Rshm_IsFull(void *);
+int Qshm_IsFull(void *);
 
 /* SIGNAL OPERATION */
 typedef void (*sighandler_t)(int);
 
 int pre_signal_catch(int, sighandler_t);
 
-int pre_signal_block(int, sigset_t *);
+int pre_signal_ctl(int, int);
 
 void pre_wait_ready();
 

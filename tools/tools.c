@@ -39,7 +39,12 @@ CtlInfo *pre_init_ctl()
 
     if((p = (CtlInfo *)malloc(sizeof(CtlInfo))) == NULL)
         return NULL;
-    memset(p, 0, sizeof(CtlInfo));
+
+    p->shmid   = 0;
+    p->pid     = 0;
+    p->shmaddr = NULL;
+    p->semid   = NULL;
+
     return p;
 }
 
@@ -68,11 +73,13 @@ int pre_empty_shm(void *shmaddr)
 {
     memset(shmaddr, 0, SHMSIZE);
 
-    int *front = (int *)shmaddr;
-    int *rear  = (int *)(shmaddr+4);
+    int *front      = (int *)shmaddr;
+    int *rear       = (int *)(shmaddr+sizeof(int));
+    int *Qfront    = (int *)(shmaddr+(sizeof(int)*2));
 
-    *front = 0;
-    *rear  = 0;
+    *front  = 0;
+    *rear   = 0;
+    *Qfront = 0;
 
     return PRE_OK;
 }
@@ -82,7 +89,7 @@ int pre_rm_shm(int shmid, const void *shmaddr)
     if(shmid == PRE_ERR)
         return PRE_OK;
 
-    if(shmaddr != NULL || shmaddr != (void *)-1)
+    if(shmaddr != NULL && shmaddr != (void *)-1)
         if(shmdt(shmaddr) < 0)
             return PRE_ERR;
 
@@ -197,16 +204,17 @@ void pre_node_free(pre_list *node)
 }
 
 /* SHM */
-int pre_addinfo_Toshm(void *shmaddr, r_info *info)
+/* 请求队列 */
+int addinfo_ToRshm(void *shmaddr, r_info *info)
 {
     int     *rear;
     void    *content;
 
-    rear    = (int *)(shmaddr+4);
-    content = shmaddr+8;
+    rear    = (int *)(shmaddr+sizeof(int));
+    content = shmaddr+(sizeof(int)*3);
 
-    if(pre_shm_IsFull(shmaddr) == PRE_TRUE) {
-        return SHMFULL;
+    if(Rshm_IsFull(shmaddr)) {
+        return RFULL;
     }
 
     memcpy(content+(*rear)*sizeof(r_info), info, sizeof(r_info));
@@ -216,32 +224,83 @@ int pre_addinfo_Toshm(void *shmaddr, r_info *info)
     return PRE_OK;
 }
 
-int pre_getinfo_Fromshm(void *shmaddr, r_info *info)
+/* 应答队列 */
+int addinfo_ToQshm(void *shmaddr, r_info *info)
 {
     int     *front;
     void    *content;
 
     front   = (int *)shmaddr;
-    content = shmaddr+8;
+    content = shmaddr+(sizeof(int)*3);
 
-    if(pre_shm_IsEmpty(shmaddr) == PRE_TRUE) {
-        return SHMEMPTY;
-    }
+    if(Qshm_IsFull(shmaddr))
+        return QFULL;
 
-    memcpy(info, content+(*front)*sizeof(r_info), sizeof(r_info));
+    memcpy(content+(*front)*sizeof(r_info), info, sizeof(r_info));
 
     *front = ((*front)+1) % MAXCOUNT;
 
     return PRE_OK;
 }
 
-int pre_shm_IsEmpty(void *shmaddr)
+/* 请求队列 */
+int getinfo_FromRshm(void *shmaddr, r_info *info)
+{
+    int     *front;
+    void    *content;
+
+    front   = (int *)shmaddr;
+    content = shmaddr+sizeof(int)*3;
+
+    if(Rshm_IsEmpty(shmaddr))
+        return REMPTY;
+    
+    memcpy(info, content+(*front)*sizeof(r_info), sizeof(r_info));
+
+    return PRE_OK;
+}
+
+/* 应答队列 */
+int getinfo_FromQshm(void *shmaddr, r_info *info)
+{
+    int     *Qfront;
+    void    *content;
+
+    Qfront   = (int *)(shmaddr+sizeof(int)*2);
+    content = shmaddr+sizeof(int)*3;
+
+    if(Qshm_IsEmpty(shmaddr)) {
+        return QEMPTY;
+    }
+
+    memcpy(info, content+(*Qfront)*sizeof(r_info), sizeof(r_info));
+
+    *Qfront = ((*Qfront)+1) % MAXCOUNT;
+
+    return PRE_OK;
+}
+
+int Qshm_IsEmpty(void *shmaddr)
+{
+    int     *front;
+    int     *Qfront;
+
+    front  = (int *)shmaddr;
+    Qfront = (int *)(shmaddr+sizeof(int)*2);
+
+    if((*front) == (*Qfront))
+        return PRE_TRUE;
+    else
+        return PRE_FALSE;
+}
+
+int Rshm_IsEmpty(void *shmaddr)
 {
     int     *front;
     int     *rear;
 
     front   = (int *)shmaddr;
-    rear    = (int *)(shmaddr+4);
+    rear    = (int *)(shmaddr+sizeof(int));
 
     if((*front) == (*rear))
         return PRE_TRUE;
@@ -249,15 +308,29 @@ int pre_shm_IsEmpty(void *shmaddr)
         return PRE_FALSE;
 }
 
-int pre_shm_IsFull(void *shmaddr)
+int Qshm_IsFull(void *shmaddr)
 {
     int     *front;
+    int     *Qfront;
+
+    front  = (int *)shmaddr;
+    Qfront = (int *)(shmaddr+sizeof(int)*2);
+
+    if(((*front) + 1) % MAXCOUNT == (*Qfront))
+        return PRE_TRUE;
+    else
+        return PRE_FALSE;
+}
+
+int Rshm_IsFull(void *shmaddr)
+{
+    int     *Qfront;
     int     *rear;
 
-    front   = (int *)shmaddr;
-    rear    = (int *)(shmaddr+4);
+    Qfront   = (int *)(shmaddr+sizeof(int)*2);
+    rear    = (int *)(shmaddr+sizeof(int));
 
-    if(((*rear) + 1) % MAXCOUNT == (*front))
+    if(((*rear) + 1) % MAXCOUNT == (*Qfront))
         return PRE_TRUE;
     else
         return PRE_FALSE;
@@ -285,14 +358,14 @@ int pre_signal_catch(int signo, sighandler_t handler)
     return PRE_OK;
 }
 
-int pre_signal_block(int signo, sigset_t *oldmask)
+int pre_signal_ctl(int signo, int how)
 {
     sigset_t newmask;
 
     sigemptyset(&newmask);
     sigaddset(&newmask, signo);
 
-    if(sigprocmask(SIG_BLOCK, &newmask, oldmask) < 0)
+    if(sigprocmask(how, &newmask, NULL) < 0)
         return PRE_ERR;
 
     return PRE_OK;
@@ -306,7 +379,7 @@ void pre_wait_ready()
     sigemptyset(&zeromask);
 
     sigsuspend(&zeromask);
-
+    errno = 0;
 }
 
 void pre_tell_ready(pid_t pid, int signo)
@@ -319,7 +392,7 @@ void pre_tell_ready(pid_t pid, int signo)
 pid_t pre_getChildPid(int cid)
 {
     int     fd, n;
-    pid_t   pid[3];
+    pid_t   cpid[3];
     char    buf[MAXLINE];
 
     if((fd = open(PIDFILE, O_RDWR)) < 0) 
@@ -327,14 +400,16 @@ pid_t pre_getChildPid(int cid)
     
     lseek(fd, 0, SEEK_SET);
 
-    if((n = read(fd, buf, sizeof(buf)) <= 0))
+    if((n = read(fd, buf, sizeof(buf))) <= 0)
         return PRE_ERR;
 
     buf[n] = '\0';
 
-    sscanf(buf, "%d\n%d\n%d\n", (int *)&pid[0], (int *)&pid[1], (int *)&pid[2]);
+    sscanf(buf, "%d\n%d\n%d\n", (int *)&cpid[0], (int *)&cpid[1], (int *)&cpid[2]);
 
-    return pid[cid];
+    close(fd);
+
+    return cpid[cid];
 }
 
 

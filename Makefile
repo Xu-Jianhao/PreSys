@@ -11,13 +11,13 @@ $(info TATGET is ${TATGET})
 $(info OBJ_O  is ${OBJ_O})
 
 $(OBJ)/%.o: tools/%.c
-	gcc  -c -Wall ${INC}  $< -o $@
+	gcc  -g -c -Wall ${INC}  $< -o $@
 
 $(OBJ)/%.o: src/%.c
-	gcc  -c -Wall ${INC}  $< -o $@
+	gcc  -g -c -Wall ${INC}  $< -o $@
 
 $(TATGET): $(OBJ_O)
-	gcc -pthread -o $@ $^
+	gcc -g -pthread -o $@ $^
 
 .PHONY: clean
 

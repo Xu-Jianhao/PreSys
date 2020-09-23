@@ -42,11 +42,10 @@
 #define MAXINFO     1024
 #define MAXCOUNT    15          /* SHMSIZE / sizeof(r_info) */
 
-#define SHMFULL     11
-#define SHMEMPTY    12
-
-#define REQUEST 0               /* 请求 */
-#define RESPOND 1               /* 应答 */
+#define RFULL     11            /* Request queue full. */
+#define REMPTY    12            /* Request queue empty. */
+#define QFULL     13            /* Respond queue full. */
+#define QEMPTY    14            /* Respond queue empty. */
 
 #define SELECT  0x00000001
 #define INSERT  0x00000002
@@ -67,8 +66,7 @@ typedef struct list_t  pre_list;
 
 /* requets info */
 struct r_info_t {
-    char        type;
-    int         flag;               /* 有效标志 */
+    char        type;               /* 请求类型 */
     int         sockfd;             /* 客户端通信套接字 */
     int         retCode;            /* 返回码 */
     char        content[1024];      /* 请求内容 */
@@ -79,6 +77,7 @@ typedef struct r_info_t r_info;
 
 struct ctl_Info_t {
     int     shmid;                  /* SHM ID */
+    pid_t   pid;
     void    *shmaddr;               /* SHM address */
     sem_t   *semid;                 /* SEM ID */
 };

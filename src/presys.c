@@ -38,7 +38,11 @@ void daemonize();
 void pre_child_destroy(int arg);
 void pre_child_quit(int arg);
 
-void pre_loopWait();
+void pre_loopWait(int fd, CtlInfo *info);
+
+CtlInfo *pre_shmsem_init();
+
+void pre_clear(CtlInfo *info);
 
 
 extern void pre_connect_process();
@@ -51,7 +55,8 @@ pid_t   pid[3];
 
 int main(int argc, const char *argv[])
 {
-    int     pfd;
+    int         pfd;
+    CtlInfo     *mainInfo;
 
     pre_init();
 
@@ -76,14 +81,26 @@ int main(int argc, const char *argv[])
     /* First Start-Up. */
     pre_startUp_child(1, pfd);
 
-    pre_loopWait(pfd);
+    /* Init SHM and SEM. */
+    if((mainInfo = pre_shmsem_init()) == NULL) {
+        LOG_WRITE("INIF SHM and SEM failed");
+        pre_tell_ready(pid[1], SIGKILL);
+        pre_tell_ready(pid[2], SIGKILL);
+        exit(-1);
+    } else {
+        LOG_WRITE("INIT SHM and SEM SUCCESS!!");
+        pre_tell_ready(pid[1], SIGQUIT);
+        pre_tell_ready(pid[2], SIGQUIT);
+    }
+
+    pre_loopWait(pfd, mainInfo);
 
     LOG_WRITE("PreSys is Quit!!");
 
     exit(0);
 }
 
-void pre_loopWait(int fd)
+void pre_loopWait(int fd, CtlInfo *info)
 {
 
     while(!Qflag)
@@ -100,8 +117,10 @@ void pre_loopWait(int fd)
             RSflag = 0;
         }
     }
-    kill(pid[1], SIGQUIT);
-    kill(pid[2], SIGQUIT);
+    pre_tell_ready(pid[1], SIGQUIT);
+    pre_tell_ready(pid[2], SIGQUIT);
+
+    pre_clear(info);
 }
 
 /* flag 为启动标志,第一次启动flag值为1 */
@@ -118,13 +137,11 @@ int pre_startUp_child(int flag, int fd)
         if(kill(pid[2], 0) == -1 && errno == ESRCH) {
             errno = 0;
             pid[2] = pre_create_process(pre_business_process);  /* Create connect process. */
-            LOG_WRITE("Connect  Process Restart Success!");
+            LOG_WRITE("Business  Process Restart Success!");
         }
     } else {
         pid[1] = pre_create_process(pre_connect_process);       /* Create connect process. */
         LOG_WRITE("Connect  Process Start-Up Success!");
-
-        sleep(1);
 
         pid[2] = pre_create_process(pre_business_process);      /* Create business process. */
         LOG_WRITE("Business Process Start-Up Success!");
@@ -168,6 +185,51 @@ void pre_init()
     RSflag = 0;
 }
 
+CtlInfo *pre_shmsem_init()
+{
+    CtlInfo     *ctlinfo;
+    
+    do {
+        if((ctlinfo = pre_init_ctl()) == NULL) {
+            LOG_WRITE("pre_init_ctl failed");
+            break;
+        }
+
+        /* CREATE SEM. */
+        if((ctlinfo->semid = pre_init_sem(CREAT_SEM, SEMNAME,\
+                    O_CREAT|O_EXCL, S_IRUSR|S_IWUSR, 1)) == SEM_FAILED)
+        {
+            LOG_WRITE("pre_init_sem CREATE failed");
+            break;
+        }
+        LOG_WRITE("CREATE SEMID SUCCESS!! [semid = %p]", ctlinfo->semid);
+
+        /* CREATE SHM. */
+        if((ctlinfo->shmid = pre_init_shm(PATHNAME, PROID, SHMSIZE,\
+                        IPC_CREAT|IPC_EXCL|S_IRUSR|S_IWUSR)) == PRE_ERR)
+        {
+            LOG_WRITE("pre_init_shm CREATE failed");
+            break;
+        }
+        LOG_WRITE("CREATE SHMID SUCCESS!! [shmid = %d]", ctlinfo->shmid);
+
+        return ctlinfo;
+    }while(0);
+    
+    pre_clear(ctlinfo);
+    return NULL;
+}
+
+void pre_clear(CtlInfo *info)
+{
+    if(pre_rm_sem(info->semid, SEMNAME) != PRE_OK)
+        LOG_WRITE("pre_rm_sem failed");
+    
+    if(pre_rm_shm(info->shmid, NULL) != PRE_OK)
+        LOG_WRITE("pre_rm_shm failed");
+    
+    pre_free_ctl(info);
+}
 
 pid_t pre_create_process(pro_handler processFunc)
 {
@@ -180,11 +242,12 @@ pid_t pre_create_process(pro_handler processFunc)
         return pid;
     }
 
-    /* TODO : 恢复信号集 */
     pre_signal_catch(SIGCHLD, SIG_DFL);
     //pre_signal_catch(SIGQUIT, SIG_DFL);
 
     if(processFunc != NULL) {
+        pre_wait_ready();
+        LOG_WRITE("Process [%d] start-up", getpid());
         processFunc();
     }
     exit(0); 
