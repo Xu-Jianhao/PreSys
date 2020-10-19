@@ -198,13 +198,13 @@ void pre_sigusr2_func(int arg)
             break;
         }
     }
+    
+    sem_post(ctlinfo->semid);
 
     if(pre_signal_ctl(SIGUSR2, SIG_UNBLOCK) == PRE_ERR) {
         LOG_WRITE("SIGUSR2 pre_signal_ctl unblock failed");
         Qflag = 1;
     }
-
-    sem_post(ctlinfo->semid);
 }
 
 
@@ -311,15 +311,23 @@ int pre_recv_request(int sockfd, CtlInfo *ctlinfo)
     int         len;
     int         count;
     r_info      info;
-    char        buf[1024];
+    char        buf[MAXINFO];
 
+    memset(buf, 0, MAXINFO);
+    memset(&info, 0, sizeof(r_info));
+    
     info.sockfd  = sockfd;
 
-    len = recv(sockfd, buf, sizeof(buf), 0);
+    len = recv(sockfd, buf, sizeof(buf), 0);        //ECONNRESET
 
     if(len < 0) {
+
+        if(errno == ECONNRESET) {
+            errno = 0;
+            return PRE_CLOSE;
+        }
     
-        LOG_WRITE("recv failed, client sockfd [%d]", sockfd);
+        LOG_WRITE("recv failed, client sockfd [%d]  errno - [%d]", sockfd, errno);
         
         return PRE_ERR;
     } else if(len == 0) {
@@ -397,9 +405,9 @@ int pre_sendTo(r_info info)
 
     memset(buf, 0, sizeof(buf));
 
-    snprintf(buf, MAXINFO-1, "%d|", info.retCode);
+    snprintf(buf, MAXINFO-1, "%d|%s", info.retCode, info.content);
 
-    memcpy(buf+strlen(buf), info.content, strlen(info.content));
+    LOG_WRITE("SEND BUF - [%s]", buf);
 
     count = 0;
     while(count != strlen(buf)) {

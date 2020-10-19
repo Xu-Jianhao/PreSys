@@ -17,6 +17,7 @@
 #include <fcntl.h>
 #include <semaphore.h>
 #include <time.h>
+#include <mysql/mysql.h>
 
 
 
@@ -111,5 +112,22 @@ pid_t pre_getChildPid(int);
 int pre_lock_reg(int, int, int, off_t, int, off_t);
 
 pid_t pre_lock_test(int, int, off_t, int, off_t);
+
+/* MYSQL */
+int pre_select(Request *, MYSQL *);
+
+int pre_insert(Request *, MYSQL *);
+
+int pre_update(Request *, MYSQL *);
+
+int pre_delete(Request *, MYSQL *);
+
+int pre_noexist(Request *);
+
+void pre_requestError(r_info *);
+
+int pre_mysql_connect(MYSQL **);
+
+void pre_mysql_destory(MYSQL *);
 
 #endif  /* _PRE_TOOLS_H */

@@ -47,10 +47,22 @@
 #define QFULL     13            /* Respond queue full. */
 #define QEMPTY    14            /* Respond queue empty. */
 
-#define SELECT  0x00000001
-#define INSERT  0x00000002
-#define DELETE  0x00000003
-#define UPDATE  0x00000004
+#define SELECT  'S'
+#define INSERT  'I'
+#define DELETE  'D'
+#define UPDATE  'U'
+
+#define SYSERROR    201
+#define NORECORD    202
+#define NOEXIST     203
+#define UNKNOWN     204
+#define MYSQLERROR  100
+
+#define SELECTOK    1
+#define INSERTOK    2
+#define UPDATEOK    3
+#define DELETEOK    4
+
 
 
 typedef void (*pro_handler)();
@@ -72,8 +84,12 @@ struct r_info_t {
     char        content[1024];      /* 请求内容 */
 };
 
-typedef struct r_info_t r_info;
-
+struct Request_t {
+    char    name[30];
+    char    addr[64];
+    char    time[64];
+    char    msg[MAXINFO];
+};
 
 struct ctl_Info_t {
     int     shmid;                  /* SHM ID */
@@ -82,6 +98,12 @@ struct ctl_Info_t {
     sem_t   *semid;                 /* SEM ID */
 };
 
+
+typedef struct r_info_t r_info;
+
+typedef struct Request_t Request;
+
 typedef struct ctl_Info_t  CtlInfo;
+
 
 #endif  /* _PRESYS_H */

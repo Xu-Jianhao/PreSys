@@ -27,7 +27,7 @@ void pre_exit_log(int flag, const char *funcName, int errNum, const char *errMsg
 
 void pre_init();
 
-pid_t pre_create_process(pro_handler);
+pid_t pre_create_process(pro_handler, int);
 
 int pre_writepid_tofile(pid_t *pid, int fd);
 
@@ -67,14 +67,18 @@ int main(int argc, const char *argv[])
 
     /* Create pidfile and lock pidfile. */
     if((pfd = open(PIDFILE, O_CREAT|O_WRONLY|O_SYNC, S_IRUSR|S_IWUSR)) < 0) {
+        
         LOG_WRITE("open pidfile failed.");
+        
         exit(-1);
     }
    
     set_cloexec(pfd);
 
     if(pre_write_lock(pfd, 0, SEEK_SET, 0) < 0) {
+        
         LOG_WRITE("lock pidfile failed.");
+        
         exit(-1);
     }
 
@@ -83,12 +87,17 @@ int main(int argc, const char *argv[])
 
     /* Init SHM and SEM. */
     if((mainInfo = pre_shmsem_init()) == NULL) {
+        
         LOG_WRITE("INIF SHM and SEM failed");
+        
         pre_tell_ready(pid[1], SIGKILL);
         pre_tell_ready(pid[2], SIGKILL);
+        
         exit(-1);
     } else {
+        
         LOG_WRITE("INIT SHM and SEM SUCCESS!!");
+        
         pre_tell_ready(pid[1], SIGQUIT);
         pre_tell_ready(pid[2], SIGQUIT);
     }
@@ -106,18 +115,24 @@ void pre_loopWait(int fd, CtlInfo *info)
     while(!Qflag)
     {
         if(sleep(5) > 0) {
+            
             errno = 0;
+            
             if(Qflag) {
                 break;
             }
         }
         if(RSflag) {
+            
             if(pre_startUp_child(0, fd) != PRE_OK)
                 break;
+            
             RSflag = 0;
         }
     }
+    
     pre_tell_ready(pid[1], SIGQUIT);
+    
     pre_tell_ready(pid[2], SIGQUIT);
 
     pre_clear(info);
@@ -130,25 +145,36 @@ int pre_startUp_child(int flag, int fd)
 
     if(!flag) {
         if(kill(pid[1], 0) == -1 && errno == ESRCH) {
+            
             errno = 0;
-            pid[1] = pre_create_process(pre_connect_process);   /* Create connect process. */
+            
+            pid[1] = pre_create_process(pre_connect_process, flag);   /* Create connect process. */
+
             LOG_WRITE("Connect  Process Restart Success!");
         }
         if(kill(pid[2], 0) == -1 && errno == ESRCH) {
+            
             errno = 0;
-            pid[2] = pre_create_process(pre_business_process);  /* Create connect process. */
+            
+            pid[2] = pre_create_process(pre_business_process, flag);  /* Create connect process. */
+            
             LOG_WRITE("Business  Process Restart Success!");
         }
     } else {
-        pid[1] = pre_create_process(pre_connect_process);       /* Create connect process. */
+        
+        pid[1] = pre_create_process(pre_connect_process, flag);       /* Create connect process. */
+        
         LOG_WRITE("Connect  Process Start-Up Success!");
 
-        pid[2] = pre_create_process(pre_business_process);      /* Create business process. */
+        pid[2] = pre_create_process(pre_business_process, flag);      /* Create business process. */
+        
         LOG_WRITE("Business Process Start-Up Success!");
     }
             
     if(pre_writepid_tofile(pid, fd) != PRE_OK) {
+        
         LOG_WRITE("Write pid to pidfile failed!");
+        
         return PRE_ERR;
     }
     return PRE_OK;
@@ -160,6 +186,7 @@ void pre_init()
     int     pfd;
 
     if(access(PIDFILE, F_OK) == 0) {
+        
         if((pfd = open(PIDFILE, O_WRONLY)) < 0)
             EXITLOG("open PIDFILE", errno);
 
@@ -167,6 +194,7 @@ void pre_init()
         
         if(!pre_is_write_lockable(pfd, 0, SEEK_SET, 0))
             EXITLOG2(MODULE, "process already exists!!");
+
     } else {
         errno = 0;
     }
@@ -231,14 +259,18 @@ void pre_clear(CtlInfo *info)
     pre_free_ctl(info);
 }
 
-pid_t pre_create_process(pro_handler processFunc)
+pid_t pre_create_process(pro_handler processFunc, int flag)
 {
     pid_t   pid;
 
     if((pid = fork()) < 0) {
+        
         LOG_WRITE("fork error");
+        
         exit(-1);
+    
     } else if(pid > 0) {
+        
         return pid;
     }
 
@@ -246,8 +278,12 @@ pid_t pre_create_process(pro_handler processFunc)
     //pre_signal_catch(SIGQUIT, SIG_DFL);
 
     if(processFunc != NULL) {
-        pre_wait_ready();
+        
+        if(flag)
+            pre_wait_ready();
+        
         LOG_WRITE("Process [%d] start-up", getpid());
+        
         processFunc();
     }
     exit(0); 
@@ -290,6 +326,7 @@ void daemonize()
     sa.sa_handler = SIG_IGN;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
+    
     if(sigaction(SIGHUP, &sa, NULL) < 0)
         EXITLOG("sigaction", errno);
 

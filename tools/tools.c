@@ -17,18 +17,18 @@ char *gettimeStr(char *buf, size_t len, const char *format)
     struct tm *tt = NULL;
     time_t t;
     char timestr[128] = "";
-    
+
     t = time(NULL);
     tt = localtime(&t);
 
     strftime(timestr, sizeof(timestr), format, tt);
-    
+
     if(len <= strlen(timestr)) {
         return NULL;
     }
 
     strcpy(buf, timestr);
-    
+
     return buf;
 }
 
@@ -184,7 +184,7 @@ int pre_list_destory(pre_list *list)
 {
     if(list == NULL)
         return PRE_OK;
-    
+
     pre_node_free(list);
 
     return PRE_OK;
@@ -197,7 +197,7 @@ void pre_node_free(pre_list *node)
 
     if(node->data != NULL)
         free(node->data);
-    
+
     free(node);
 
     return;
@@ -218,7 +218,7 @@ int addinfo_ToRshm(void *shmaddr, r_info *info)
     }
 
     memcpy(content+(*rear)*sizeof(r_info), info, sizeof(r_info));
-    
+
     *rear = ((*rear)+1) % MAXCOUNT;
 
     return PRE_OK;
@@ -254,7 +254,7 @@ int getinfo_FromRshm(void *shmaddr, r_info *info)
 
     if(Rshm_IsEmpty(shmaddr))
         return REMPTY;
-    
+
     memcpy(info, content+(*front)*sizeof(r_info), sizeof(r_info));
 
     return PRE_OK;
@@ -340,7 +340,7 @@ int Rshm_IsFull(void *shmaddr)
 int pre_signal_catch(int signo, sighandler_t handler)
 {
     struct sigaction act;
-    
+
     act.sa_handler = handler;
     sigemptyset(&act.sa_mask);
     act.sa_flags = 0;
@@ -397,7 +397,7 @@ pid_t pre_getChildPid(int cid)
 
     if((fd = open(PIDFILE, O_RDWR)) < 0) 
         return PRE_ERR;
-    
+
     lseek(fd, 0, SEEK_SET);
 
     if((n = read(fd, buf, sizeof(buf))) <= 0)
@@ -447,3 +447,158 @@ pid_t pre_lock_test(int fd, int type, off_t offset, int whence, off_t len)
     return lock.l_pid;                  /* true, return pid of lock owner */
 }
 
+/* Mysql */
+int pre_select(Request *req, MYSQL *mysql)
+{
+    char        sql[2048];
+    MYSQL_RES   *res;
+    MYSQL_ROW   row;
+
+    if(mysql_ping(mysql) != 0) {
+        return SYSERROR;
+    }
+
+    memset(sql, 0, MAXINFO);
+    memset(req->time, 0, 64);
+    memset(req->addr, 0, 64);
+    memset(req->msg,  0, MAXINFO);
+
+    sprintf(sql, "SELECT address,time,msg FROM pinfo WHERE name = '%s'", req->name);
+
+    mysql_query(mysql, sql);
+    
+    res = mysql_store_result(mysql);
+
+    if(res == NULL) {
+        return SYSERROR;
+    }
+
+    if(mysql_num_rows(res) == 0) {
+        strcpy(req->msg, "没有此人记录!!");
+        return NORECORD;
+    }
+
+    while(row = mysql_fetch_row(res)) {         // TODO : 数组实现
+        strcpy(req->addr, row[0]);
+        strcpy(req->time, row[1]);
+        strcpy(req->msg,  row[2]);
+    }
+
+    mysql_free_result(res);
+
+    return SELECTOK;
+}
+
+int pre_insert(Request *req, MYSQL *mysql)
+{
+    char sql[2048];
+    
+    if(mysql_ping(mysql) != 0) {
+        return SYSERROR;
+    }
+
+    sprintf(sql, "INSERT INTO pinfo(name, address, time, msg)\
+            VALUES('%s', '%s', '%s', '%s')", req->name, req->addr, req->time, req->msg);
+
+    mysql_query(mysql, sql);
+
+    if(mysql_affected_rows(mysql) <= 0) {
+        return SYSERROR;
+    }
+
+    memset(req->msg, 0, MAXINFO);
+
+    strcat(req->msg, "插入成功!!");
+
+    return INSERTOK;
+}
+
+int pre_update(Request *req, MYSQL *mysql)
+{
+    char sql[2048];
+    
+    if(mysql_ping(mysql) != 0) {
+        return SYSERROR;
+    }
+
+    sprintf(sql, "UPDATE pinfo set address = '%s', time = '%s', msg = '%s' where name = '%s'", 
+            req->addr, req->time, req->msg, req->name);
+
+    mysql_query(mysql, sql);
+
+    if(mysql_affected_rows(mysql) <= 0) {
+        return SYSERROR;
+    }
+
+    memset(req->msg, 0, MAXINFO);
+
+    strcat(req->msg, "修改成功!!");
+
+    return UPDATEOK;
+}
+
+int pre_delete(Request *req, MYSQL *mysql)
+{
+    char sql[2048];
+    
+    if(mysql_ping(mysql) != 0) {
+        return SYSERROR;
+    }
+
+    sprintf(sql, "DELETE FROM pinfo where name = '%s' and time = '%s'", req->name, req->time);
+
+    mysql_query(mysql, sql);
+
+    if(mysql_affected_rows(mysql) <= 0) {
+        return SYSERROR;
+    }
+
+    memset(req->msg, 0, MAXINFO);
+
+    strcat(req->msg, "删除成功!!");
+
+    return DELETEOK;
+}
+
+int pre_noexist(Request *req)
+{
+    memset(req->msg, 0, MAXINFO);
+
+    strcat(req->msg, "请求类型不存在!");
+
+    return NOEXIST;
+}
+
+void pre_requestError(r_info *info)
+{
+    memset(info->content, 0, MAXINFO);
+
+    info->retCode = UNKNOWN;
+
+    strcat(info->content, "null|null|null|未知错误!");
+}
+
+int pre_mysql_connect(MYSQL **mysql)
+{
+    bool    value;
+
+    *mysql = mysql_init(NULL);
+
+    value = 1;
+    
+    mysql_options(*mysql, MYSQL_OPT_RECONNECT, &value);
+
+    if(mysql_real_connect(*mysql, "localhost", "root", "Xu120110@@", "presys", 
+                0, NULL, 0)== NULL) {
+    
+        mysql_close(*mysql);
+        return PRE_ERR;
+    }
+
+    return PRE_OK;
+}
+
+void pre_mysql_destory(MYSQL *mysql)
+{
+    mysql_close(mysql);
+}

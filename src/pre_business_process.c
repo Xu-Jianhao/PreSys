@@ -15,7 +15,7 @@
 
 extern int Qflag;
 
-void pre_loopStart(CtlInfo *ctlinfo);
+void pre_loopStart(CtlInfo *ctlinfo, MYSQL *mysql);
 
 void pre_sigusr1_func(int arg);
 
@@ -23,11 +23,16 @@ int pre_Get_Request(CtlInfo *ctlinfo, r_info *info);
 
 int pre_Return_Respond(CtlInfo *ctlinfo, r_info *info);
 
-int pre_Request_handle(r_info *info);
+int pre_Request_handle(r_info *info, MYSQL * mysql);
+
+void pre_packing(r_info *info, Request *req);
+
+int pre_unpacking(Request *req, char *content) ;
 
 void pre_business_process()
 {
     CtlInfo     *ctlinfo;
+    MYSQL       *mysql;
 
     do {
         
@@ -77,12 +82,17 @@ void pre_business_process()
         }
 
         /* Connect mysql. */
-
+        if(pre_mysql_connect(&mysql) == PRE_ERR) {
+            LOG_WRITE("Mysql Connect failed %s", mysql_error(mysql));
+            break;
+        }
+        
+        LOG_WRITE("CONNECT MYSQL SUCCESS!!");
 
         Qflag = 0;
 
         /* LOOP. */
-        pre_loopStart(ctlinfo);
+        pre_loopStart(ctlinfo, mysql);
     
     
     } while(0);
@@ -98,39 +108,42 @@ void pre_business_process()
         ctlinfo->shmaddr = NULL;
     }
 
+    pre_mysql_destory(mysql);
+
     pre_free_ctl(ctlinfo);
 }
 
-void pre_loopStart(CtlInfo *ctlinfo)
+void pre_loopStart(CtlInfo *ctlinfo, MYSQL *mysql)
 {
     int         ret;
     r_info      info;
 
     while(!Qflag) {
        
-        LOG_WRITE("Loop  - Wait");
-        pre_wait_ready();
-        LOG_WRITE("Catch - Done");
-        
         /* Get data from SHM. */
         if(pre_Get_Request(ctlinfo, &info) == REMPTY) {
 
             LOG_WRITE("Rqueue is EMPTY!!");
         
+            pre_wait_ready();
+            
             continue;
         }
 
         
         /* Mysql opertion. */
-        info.content[strlen(info.content)] = '\0';
         LOG_WRITE("Get data is [%s]", info.content);
-        pre_Request_handle(&info);
+        if(pre_Request_handle(&info, mysql) == PRE_ERR) {
+        
+            LOG_WRITE("Request handler failed  unknown error");
 
-       
-        /* inset data to QSHM. */
+            pre_requestError(&info);
+        }
+
+        /* insert data to QSHM. */
         if((ret = pre_Return_Respond(ctlinfo, &info)) == QFULL) {
     
-            LOG_WRITE("Qqueue is FULL");
+            LOG_WRITE("Qqueue is FULL");    /* sleep  and try */
             
             break;
         
@@ -193,34 +206,112 @@ int pre_Return_Respond(CtlInfo *ctlinfo, r_info *info)
 /*
  * type  sockfd  retcode   content
  * */
-int pre_Request_handle(r_info *info)
+int pre_Request_handle(r_info *info, MYSQL *mysql)
 {
-    info->retCode = 0;
+    Request req;
+
+    memset(&req, 0, sizeof(req));
+
+    if(pre_unpacking(&req, info->content) != PRE_OK) {
+        LOG_WRITE("Unpacking failed");
+        return PRE_ERR;
+    }
 
     switch(info->type) {
         
         case SELECT :
 
+            if((info->retCode = pre_select(&req, mysql)) == SYSERROR) {
+                
+                LOG_WRITE("SELECT SQL failed  : %s", mysql_error(mysql));
+            }
+                 
             break;
         
         case INSERT :
+
+            if((info->retCode = pre_insert(&req, mysql)) == SYSERROR) {
+                
+                LOG_WRITE("INSERT SQL failed %s", mysql_error(mysql));
+            }
 
             break;
 
         case DELETE :
 
+            if((info->retCode = pre_delete(&req, mysql)) == SYSERROR) {
+                
+                LOG_WRITE("DELETE SQL failed  : %s", mysql_error(mysql));
+            }
+
             break;
 
         case UPDATE :
 
+            if((info->retCode = pre_update(&req, mysql)) == SYSERROR) {
+                
+                LOG_WRITE("UPDATE SQL failed  : %s", mysql_error(mysql));
+            }
+
             break;
 
         default:
-            /* TODO */
+
+            pre_noexist(&req);
+
+            LOG_WRITE("Request type no exist!!");
+
             break;
     }
 
+    errno = 0;
+
+    pre_packing(info, &req);
+
     return PRE_OK;
+}
+
+int pre_unpacking(Request *req, char *content) 
+{
+    int     i;
+    char    *pos;
+
+    pos = strtok(content, "|");
+    
+    for(i = 0; pos != NULL; i++) {
+        switch(i) {
+        
+            case 0 :
+                memcpy(req->name, pos, strlen(pos));
+                break;
+            case 1 :
+                memcpy(req->addr, pos, strlen(pos));
+                break;
+            case 2 :
+                memcpy(req->time, pos, strlen(pos));
+                break;
+            case 3 :
+                memcpy(req->msg, pos, strlen(pos));
+                break;
+
+            default:
+                LOG_WRITE("Data ERROR!!!");
+                return PRE_ERR;
+        
+        }
+        pos = strtok(NULL, "|");
+    }
+
+    if(i == 0)
+        return PRE_ERR;
+    return PRE_OK;
+}
+
+void pre_packing(r_info *info, Request *req)
+{
+    memset(info->content, 0, MAXINFO);
+
+    sprintf(info->content, "%s|%s|%s|%s", req->name, req->addr, req->time, req->msg);
 }
 
 void pre_sigusr1_func(int arg)
